@@ -116,9 +116,18 @@ uninstall: no-autostart ## Удалить бинарник и пункт мен�
 dist: $(BIN) ## Собрать архив для GitHub Releases
 	$(call info,упаковка $(ARCHIVE))
 	@tar -czf $(ARCHIVE) --transform 's,^,$(APP)-$(VERSION)/,' \
-		-C dist $(APP) -C .. LICENSE README.md THIRD_PARTY.md
+		-C dist $(APP) -C .. LICENSE README.md README.en.md THIRD_PARTY.md
 	@sha256sum $(ARCHIVE) > $(ARCHIVE).sha256
 	$(call ok,$(ARCHIVE) + .sha256)
+
+.PHONY: release
+release: ## Поставить тег v<версия> и запустить сборку релиза на GitHub
+	@git diff --quiet && git diff --cached --quiet || { printf "$(R)✘$(N) есть незакоммиченные изменения\n"; exit 1; }
+	@git rev-parse -q --verify refs/tags/v$(VERSION) >/dev/null && { printf "$(R)✘$(N) тег v$(VERSION) уже есть: поднимите version в pyproject.toml\n"; exit 1; } || true
+	$(call info,тег v$(VERSION) → origin)
+	@git tag -a v$(VERSION) -m "v$(VERSION)"
+	@git push origin HEAD v$(VERSION)
+	$(call ok,GitHub Actions соберёт релиз: $(shell git remote get-url origin | sed -E 's#git@github.com:#https://github.com/#; s#\.git$$##')/actions)
 
 .PHONY: clean
 clean: ## Удалить артефакты сборки

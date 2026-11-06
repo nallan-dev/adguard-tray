@@ -1,9 +1,9 @@
 # AdGuard VPN Tray
 
+**Русский** · [English](README.en.md)
+
 **Неофициальный** трей-клиент для [AdGuard VPN CLI](https://github.com/AdguardTeam/AdGuardVPNCLI) на Linux.
 Один бинарник, тёмная тема, работает поверх штатной утилиты `adguardvpn-cli`.
-
-> *Unofficial Linux tray GUI for `adguardvpn-cli`: status, connect/disconnect, location search, live logs. Not affiliated with AdGuard.*
 
 <p align="center"><img src="docs/screenshot.png" width="440" alt="Скриншот"></p>
 
@@ -32,11 +32,16 @@
 
 ### Из готового релиза
 
+Последняя версия одной командой:
+
 ```bash
-tar -xzf adguard-tray-*-linux-x86_64.tar.gz
-install -Dm755 adguard-tray-*/adguard-tray ~/.local/bin/adguard-tray
+mkdir -p ~/.local/bin
+curl -fsSL https://github.com/nallan-dev/adguard-tray/releases/latest/download/adguard-tray-linux-x86_64.tar.gz \
+  | tar -xz --wildcards --strip-components=1 -C ~/.local/bin 'adguard-tray-*/adguard-tray'
 adguard-tray            # или: adguard-tray --hidden (сразу в трей)
 ```
+
+Или скачайте архив вручную со страницы [Releases](https://github.com/nallan-dev/adguard-tray/releases) (контрольная сумма лежит в `.sha256`).
 
 ### Из исходников
 
@@ -63,6 +68,7 @@ make build install autostart     # собрать, поставить, вклю�
   no-autostart   Выключить автозапуск
   uninstall      Удалить бинарник и пункт меню (конфиг остаётся)
   dist           Собрать архив для GitHub Releases
+  release        Поставить тег v<версия> и запустить сборку релиза на GitHub
   clean          Удалить артефакты сборки
 ```
 
@@ -131,6 +137,14 @@ adguard_tray/
 ```
 
 Стек: Python 3.11+, PySide6 (Qt 6), PyInstaller для бинарника.
+
+### Выпуск версии
+
+1. Поднимите `version` в `pyproject.toml` и закоммитьте.
+2. `make release`: ставит тег `v<версия>` и пушит его.
+3. GitHub Actions ([`release.yml`](.github/workflows/release.yml)) прогоняет тесты, собирает бинарник на Ubuntu 22.04 и публикует релиз с архивом и `.sha256`.
+
+Пробную сборку без релиза можно запустить вручную: Actions → Release → *Run workflow*. Бинарник будет в артефактах.
 
 ## Лицензия и правовое
 
