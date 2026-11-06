@@ -1,0 +1,20 @@
+[project]
+name = "adguard-tray"
+version = "0.1.0"
+description = "Unofficial tray GUI for adguardvpn-cli on Linux"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["adguard", "vpn", "tray", "pyside6", "linux"]
+requires-python = ">=3.11"
+dependencies = ["PySide6-Essentials>=6.8"]
+
+[project.scripts]
+adguard-tray = "adguard_tray.main:main"
+
+[dependency-groups]
+dev = ["pyinstaller>=6.11", "pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
