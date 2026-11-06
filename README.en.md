@@ -5,9 +5,7 @@
 An **unofficial** system tray client for [AdGuard VPN CLI](https://github.com/AdguardTeam/AdGuardVPNCLI) on Linux.
 A single binary with a dark theme, built on top of the stock `adguardvpn-cli` utility.
 
-<p align="center"><img src="docs/screenshot.png" width="440" alt="Screenshot"></p>
-
-> The UI is currently in Russian only. The screenshot reads: *Connected · Disconnect · Locations · Search: city, country or ISO… · Show logs*.
+<p align="center"><img src="docs/screenshot-en.png" width="440" alt="Screenshot"></p>
 
 ## Features
 
@@ -19,6 +17,7 @@ A single binary with a dark theme, built on top of the stock `adguardvpn-cli` ut
 - Account login via the browser (`adguardvpn-cli login`).
 - Closing the window hides the app to the tray. To quit, right-click the icon → Quit.
 - Single instance: launching it again brings up the existing window.
+- English and Russian UI: RU / EN switch in the window. On first launch the language follows the system locale.
 
 ## Requirements
 
@@ -104,7 +103,7 @@ Why not `status` and `disconnect`? In `--no-fork` mode the CLI writes no pid fil
 
 Files:
 
-- `~/.config/adguard-tray/config.json`: last location, whether logs are shown.
+- `~/.config/adguard-tray/config.json`: last location, UI language, whether logs are shown.
 - `~/.local/bin/adguard-tray`: the binary.
 - `~/.local/share/applications/adguard-tray.desktop`: menu entry.
 - `~/.config/autostart/adguard-tray.desktop`: autostart.
@@ -113,7 +112,6 @@ Files:
 
 - If the VPN was started from a terminal, its logs are visible only in that terminal. The GUI shows its status and can disconnect it.
 - The connection is detected by a network interface named `tun*`.
-- The UI is in Russian only.
 - Tested with `adguardvpn-cli` v1.8. If the CLI output format changes, the parsers in `adguard_tray/cli.py` may need an update.
 
 ## Development
@@ -132,6 +130,7 @@ adguard_tray/
   window.py      # main window
   main.py        # tray, menu, single instance
   theme.py       # dark theme and icon (drawn in code)
+  i18n.py        # UI strings, ru / en
   config.py      # ~/.config/adguard-tray/config.json
 ```
 

@@ -12,6 +12,7 @@ class Config:
     last_location: str = ""  # value passed to `connect -l` (city name)
     last_location_title: str = ""
     logs_visible: bool = False
+    lang: str = ""  # ru | en; empty = detect from system locale
 
     @classmethod
     def load(cls) -> "Config":

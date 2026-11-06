@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QStandardItem, QStandardItemModel
+from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QListView,
     QPlainTextEdit,
     QPushButton,
@@ -16,27 +17,26 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import i18n, theme
 from .cli import Location, Status
 from .config import Config
 from .controller import VpnController
+from .i18n import tr
 
 LOC_ROLE = Qt.UserRole + 1
 SEARCH_ROLE = Qt.UserRole + 2
 
-STATE_TEXT = {
-    "connected": "Подключено",
-    "starting": "Подключение…",
-    "disconnected": "Отключено",
-    "logged_out": "Требуется вход",
-    "unknown": "Статус неизвестен",
-}
+
+def state_text(state: str) -> str:
+    return tr(f"state.{state}")
 
 BASE_WIDTH = 440
 LOG_WIDTH = 760
 
 
 class MainWindow(QWidget):
+    language_changed = Signal(str)
+
     def __init__(self, ctrl: VpnController, cfg: Config) -> None:
         super().__init__()
         self.ctrl, self.cfg = ctrl, cfg
@@ -61,6 +61,7 @@ class MainWindow(QWidget):
         self.state_lbl = QLabel()
         self.state_lbl.setStyleSheet("font-size: 13pt; font-weight: 600;")
         self.loc_lbl = QLabel(objectName="muted")
+        self.loc_lbl.setWordWrap(True)
         txt.addWidget(self.state_lbl)
         txt.addWidget(self.loc_lbl)
         cl.addLayout(txt, 1)
@@ -74,13 +75,28 @@ class MainWindow(QWidget):
         self.loc_toggle = QToolButton(checkable=True)
         self.loc_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.loc_toggle.toggled.connect(self._toggle_locations)
-        root.addWidget(self.loc_toggle)
+        self.lang_btn = QToolButton(objectName="lang")
+        self.lang_btn.setPopupMode(QToolButton.InstantPopup)
+        lang_menu = QMenu(self.lang_btn)
+        group = QActionGroup(lang_menu)
+        for code, label in i18n.LANGS.items():
+            act = QAction(label, lang_menu, checkable=True, checked=code == i18n.get_lang())
+            act.triggered.connect(lambda _c=False, code=code: self._set_lang(code))
+            group.addAction(act)
+            lang_menu.addAction(act)
+        self.lang_btn.setMenu(lang_menu)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.loc_toggle)
+        row.addStretch(1)
+        row.addWidget(self.lang_btn)
+        root.addLayout(row)
 
         self.loc_box = QWidget()
         lb = QVBoxLayout(self.loc_box)
         lb.setContentsMargins(0, 0, 0, 0)
         lb.setSpacing(6)
-        self.search = QLineEdit(placeholderText="Поиск: город, страна или ISO…")
+        self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
         lb.addWidget(self.search)
         self.model = QStandardItemModel(self)
@@ -99,9 +115,9 @@ class MainWindow(QWidget):
         self.list.activated.connect(self._connect_index)
         self.list.clicked.connect(self._select_index)
         lb.addWidget(self.list)
-        hint = QLabel("Клик: выбрать · двойной клик / Enter: подключиться", objectName="muted")
-        hint.setStyleSheet("font-size: 8.5pt;")
-        lb.addWidget(hint)
+        self.hint = QLabel(objectName="muted")
+        self.hint.setStyleSheet("font-size: 8.5pt;")
+        lb.addWidget(self.hint)
         self.loc_box.hide()
         root.addWidget(self.loc_box, 1)
 
@@ -125,36 +141,53 @@ class MainWindow(QWidget):
         ctrl.log_cleared.connect(self.log_view.clear)
         ctrl.login_url.connect(self._open_login_url)
 
-        self._update_toggle_texts()
-        self._render_status(ctrl.status)
+        self.retranslate()
         if ctrl.locations:
             self._fill_locations(ctrl.locations)
+
+    # ---------- language ----------
+    def retranslate(self) -> None:
+        self.search.setPlaceholderText(tr("search.placeholder"))
+        self.hint.setText(tr("list.hint"))
+        self.lang_btn.setText(f"{i18n.LANGS[i18n.get_lang()]} ▾")
+        self.lang_btn.setToolTip(tr("lang.tooltip"))
+        self._update_toggle_texts()
+        self._render_status(self.ctrl.status)
+
+    def _set_lang(self, code: str) -> None:
+        if code == i18n.get_lang():
+            return
+        i18n.set_lang(code)
+        self.cfg.lang = code
+        self.cfg.save()
+        self.retranslate()
+        self.language_changed.emit(code)
 
     # ---------- rendering ----------
     def _render_status(self, st: Status) -> None:
         self.icon_lbl.setPixmap(theme.shield_icon(st.state).pixmap(44, 44))
-        self.state_lbl.setText(STATE_TEXT.get(st.state, st.state))
+        self.state_lbl.setText(state_text(st.state))
         self.state_lbl.setStyleSheet(
             f"font-size: 13pt; font-weight: 600; color: {theme.STATE_COLORS.get(st.state, theme.TEXT)};"
         )
         if st.connected:
-            parts = [st.location or "локация неизвестна"]
+            parts = [st.location or tr("loc.unknown")]
             if self.ctrl.status.connected and not self.ctrl.own_process:
-                parts.append("запущен вне GUI")
+                parts.append(tr("loc.external"))
             self.loc_lbl.setText(" · ".join(parts))
         else:
             last = self.cfg.last_location_title or self.cfg.last_location
-            self.loc_lbl.setText(f"Локация: {last}" if last else "Локация не выбрана: последняя из CLI")
+            self.loc_lbl.setText(tr("loc.selected", name=last) if last else tr("loc.none"))
 
         btn = self.action_btn
         if st.state == "logged_out":
-            btn.setText("Войти")
+            btn.setText(tr("btn.login"))
             btn.setObjectName("primary")
         elif st.connected or st.state == "starting" or self.ctrl.own_process:
-            btn.setText("Отключить")
+            btn.setText(tr("btn.disconnect"))
             btn.setObjectName("danger")
         else:
-            btn.setText("Подключить")
+            btn.setText(tr("btn.connect"))
             btn.setObjectName("primary")
         btn.setEnabled(not self.ctrl.busy)
         btn.style().unpolish(btn)
@@ -186,8 +219,10 @@ class MainWindow(QWidget):
     def _update_toggle_texts(self) -> None:
         n = self.model.rowCount()
         arrow = "▾" if self.loc_toggle.isChecked() else "▸"
-        self.loc_toggle.setText(f"{arrow}  Локации ({n})" if n else f"{arrow}  Локации")
-        self.log_toggle.setText("▾  Скрыть логи" if self.log_toggle.isChecked() else "▸  Показать логи")
+        title = tr("toggle.locations")
+        self.loc_toggle.setText(f"{arrow}  {title} ({n})" if n else f"{arrow}  {title}")
+        on = self.log_toggle.isChecked()
+        self.log_toggle.setText(f"▾  {tr('logs.hide')}" if on else f"▸  {tr('logs.show')}")
 
     # ---------- actions ----------
     def _on_action(self) -> None:

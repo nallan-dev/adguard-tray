@@ -17,6 +17,7 @@
 - Вход в аккаунт через браузер (`adguardvpn-cli login`).
 - Закрытие окна сворачивает приложение в трей, выход через ПКМ по иконке → «Выход».
 - Повторный запуск не плодит копии, а показывает уже открытое окно.
+- Интерфейс на русском и английском: переключатель RU / EN в окне. При первом запуске язык берётся из системной локали.
 
 ## Требования
 
@@ -105,7 +106,7 @@ youruser ALL=(root) NOPASSWD:SETENV: /usr/local/bin/adguardvpn-cli, /usr/bin/kil
 
 Файлы:
 
-- `~/.config/adguard-tray/config.json`: последняя локация, показывать ли логи.
+- `~/.config/adguard-tray/config.json`: последняя локация, язык интерфейса, показывать ли логи.
 - `~/.local/bin/adguard-tray`: бинарник.
 - `~/.local/share/applications/adguard-tray.desktop`: пункт меню.
 - `~/.config/autostart/adguard-tray.desktop`: автозапуск.
@@ -114,7 +115,6 @@ youruser ALL=(root) NOPASSWD:SETENV: /usr/local/bin/adguardvpn-cli, /usr/bin/kil
 
 - Если VPN запущен из терминала, его логи видны только в том терминале. GUI показывает статус и умеет его отключить.
 - Подключение определяется по интерфейсу с именем `tun*`.
-- Интерфейс только на русском.
 - Проверено с `adguardvpn-cli` v1.8. Если формат вывода CLI изменится, может понадобиться поправить парсеры в `adguard_tray/cli.py`.
 
 ## Разработка
@@ -133,6 +133,7 @@ adguard_tray/
   window.py      # главное окно
   main.py        # трей, меню, single-instance
   theme.py       # тёмная тема и иконка (рисуется кодом)
+  i18n.py        # строки интерфейса ru / en
   config.py      # ~/.config/adguard-tray/config.json
 ```
 

@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from . import cli
 from .cli import Location, Status
+from .i18n import tr
 
 POLL_MS = 2000  # /proc + /sys scan, cheap
 CLI_STATUS_MS = 30_000  # `adguardvpn-cli status`: login state / fork-mode connections
@@ -95,7 +96,7 @@ class VpnController(QObject):
             self._log("--- disconnect ---")
             self._run_aux(cli.root_cmd("disconnect"), self._after_disconnect)
         else:
-            self._log("Нет запущенного VPN-процесса")
+            self._log(tr("log.no_process"))
             self._after_disconnect(0)
 
     def login(self) -> None:
@@ -132,8 +133,8 @@ class VpnController(QObject):
                 self._external_pid = proc.pid
                 self.logs.clear()
                 self.log_cleared.emit()
-                self._log(f"VPN запущен вне GUI: pid {proc.pid}: {' '.join(proc.argv)}")
-                self._log("Его вывод идёт в ту консоль, где он запущен; здесь его не перехватить.")
+                self._log(tr("log.external", pid=proc.pid, cmd=" ".join(proc.argv)))
+                self._log(tr("log.external_hint"))
         else:
             self._external_pid = None
             st = self._cli_status
@@ -216,7 +217,7 @@ class VpnController(QObject):
                 if waited["ms"] < 15_000:
                     QTimer.singleShot(300, check)
                 else:
-                    self._log("Старый процесс не завершился, переподключение отменено")
+                    self._log(tr("log.reconnect_cancelled"))
                     self._pending_connect = None
                 return
             if self._pending_connect is not None:

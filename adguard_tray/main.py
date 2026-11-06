@@ -8,11 +8,12 @@ from PySide6.QtGui import QAction
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import theme
+from . import i18n, theme
 from .cli import Status
 from .config import Config
 from .controller import VpnController
-from .window import STATE_TEXT, MainWindow
+from .i18n import tr
+from .window import MainWindow, state_text
 
 SERVER_NAME = f"adguard-tray-{os.getuid()}"
 
@@ -32,6 +33,7 @@ class TrayApp:
     def __init__(self, app: QApplication) -> None:
         self.app = app
         self.cfg = Config.load()
+        i18n.set_lang(self.cfg.lang or i18n.detect())
         self.ctrl = VpnController()
         self.win = MainWindow(self.ctrl, self.cfg)
         self._last_state = "unknown"
@@ -39,9 +41,9 @@ class TrayApp:
         self.tray = QSystemTrayIcon(theme.shield_icon("unknown"))
         self.tray.setToolTip("AdGuard VPN Tray")
         menu = QMenu()
-        self.act_show = QAction("Открыть окно", menu, triggered=self.win.show_and_raise)
-        self.act_toggle = QAction("Подключить", menu, triggered=self._toggle_vpn)
-        self.act_quit = QAction("Выход", menu, triggered=self.quit)
+        self.act_show = QAction(menu, triggered=self.win.show_and_raise)
+        self.act_toggle = QAction(menu, triggered=self._toggle_vpn)
+        self.act_quit = QAction(menu, triggered=self.quit)
         menu.addAction(self.act_show)
         menu.addSeparator()
         menu.addAction(self.act_toggle)
@@ -54,6 +56,8 @@ class TrayApp:
 
         self.ctrl.status_changed.connect(self._on_status)
         self.ctrl.busy_changed.connect(lambda _b: self._on_status(self.ctrl.status))
+        self.win.language_changed.connect(lambda _l: self._retranslate())
+        self._retranslate()
 
         self.server = QLocalServer()
         QLocalServer.removeServer(SERVER_NAME)
@@ -74,26 +78,31 @@ class TrayApp:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self.win.toggle_visible()
 
+    def _retranslate(self) -> None:
+        self.act_show.setText(tr("tray.open"))
+        self.act_quit.setText(tr("tray.quit"))
+        self._on_status(self.ctrl.status)
+
     def _on_status(self, st: Status) -> None:
         self.tray.setIcon(theme.shield_icon(st.state))
         self.win.setWindowIcon(theme.shield_icon(st.state))
         where = f": {st.location}" if st.connected and st.location else ""
-        self.tray.setToolTip(f"AdGuard VPN Tray · {STATE_TEXT.get(st.state, st.state)}{where}")
+        self.tray.setToolTip(f"AdGuard VPN Tray · {state_text(st.state)}{where}")
         if st.state == "logged_out":
-            self.act_toggle.setText("Войти…")
+            self.act_toggle.setText(tr("tray.login"))
         elif st.connected or st.state == "starting" or self.ctrl.own_process:
-            self.act_toggle.setText("Отключить")
+            self.act_toggle.setText(tr("btn.disconnect"))
         else:
             label = self.cfg.last_location_title or self.cfg.last_location
-            self.act_toggle.setText(f"Подключить ({label})" if label else "Подключить")
+            self.act_toggle.setText(tr("tray.connect_to", name=label) if label else tr("btn.connect"))
         self.act_toggle.setEnabled(not self.ctrl.busy)
 
         prev, self._last_state = self._last_state, st.state
         if prev != "unknown" and prev != st.state and not self.win.isVisible():
             if st.connected:
-                self.tray.showMessage("AdGuard VPN", f"Подключено{where}", self.tray.icon(), 3000)
+                self.tray.showMessage("AdGuard VPN", f"{state_text('connected')}{where}", self.tray.icon(), 3000)
             elif st.state == "disconnected" and prev == "connected":
-                self.tray.showMessage("AdGuard VPN", "Отключено", self.tray.icon(), 3000)
+                self.tray.showMessage("AdGuard VPN", state_text("disconnected"), self.tray.icon(), 3000)
 
     def _toggle_vpn(self) -> None:
         st = self.ctrl.status
