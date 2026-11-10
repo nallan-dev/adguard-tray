@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ APP_LOG = DATA_DIR / "app.log"
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]|\r")
 _URL = re.compile(r"https?://\S+")
 _CONNECTED = re.compile(r"Connected to (.+?) in (\S+) mode", re.IGNORECASE)
+_MODE = re.compile(r"\b(general|selective)\b", re.IGNORECASE)
 
 
 def strip_ansi(text: str) -> str:
@@ -80,6 +82,12 @@ def parse_status(text: str) -> Status:
     return Status("unknown", raw=clean)
 
 
+def parse_mode(text: str) -> str:
+    """`site-exclusions mode` output → general | selective | unknown."""
+    m = _MODE.search(strip_ansi(text))
+    return m.group(1).lower() if m else "unknown"
+
+
 def find_url(text: str) -> str | None:
     m = _URL.search(strip_ansi(text))
     return m.group(0).rstrip(".,)") if m else None
@@ -112,6 +120,19 @@ def root_cmd(*args: str) -> tuple[str, list[str]]:
     if sudo_allowed(CLI):
         return "sudo", ["-n", home, CLI, *args]
     return "pkexec", ["env", home, CLI, *args]
+
+
+def root_batch(cmds: list[list[str]]) -> list[tuple[str, list[str]]]:
+    """Several adguardvpn-cli calls as root, run one after another.
+
+    With passwordless sudo every call is separate; with pkexec they are joined into
+    a single `sh -c` so the user is asked for the password once.
+    """
+    if sudo_allowed(CLI):
+        return [root_cmd(*c) for c in cmds]
+    home = f"HOME={os.environ.get('HOME', str(Path.home()))}"
+    script = " && ".join(shlex.join([CLI, *c]) for c in cmds)
+    return [("pkexec", ["env", home, "sh", "-c", script])]
 
 
 def user_cmd(*args: str) -> tuple[str, list[str]]:

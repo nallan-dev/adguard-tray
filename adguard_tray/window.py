@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QMessageBox,
     QListView,
     QPlainTextEdit,
     QPushButton,
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import i18n, theme
+from . import i18n, theme, whitelist
 from .cli import Location, Status
 from .config import Config
 from .controller import VpnController
@@ -71,11 +72,36 @@ class MainWindow(QWidget):
         cl.addWidget(self.action_btn)
         root.addWidget(card)
 
+        # --- "reconnect to apply" notice ---
+        self.notice = QFrame(objectName="notice")
+        nl = QHBoxLayout(self.notice)
+        nl.setContentsMargins(12, 8, 8, 8)
+        nl.setSpacing(10)
+        self.notice_lbl = QLabel(wordWrap=True)
+        nl.addWidget(self.notice_lbl, 1)
+        self.reconnect_btn = QPushButton(objectName="primary")
+        self.reconnect_btn.clicked.connect(self.ctrl.reconnect)
+        nl.addWidget(self.reconnect_btn)
+        self.notice.hide()
+        root.addWidget(self.notice)
+
         # --- locations section ---
         self.loc_toggle = QToolButton(checkable=True)
         self.loc_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.loc_toggle.toggled.connect(self._toggle_locations)
-        self.lang_btn = QToolButton(objectName="lang")
+        self.mode_btn = QToolButton(objectName="pill")
+        self.mode_btn.setPopupMode(QToolButton.InstantPopup)
+        mode_menu = QMenu(self.mode_btn)
+        mode_group = QActionGroup(mode_menu)
+        self.mode_actions: dict[str, QAction] = {}
+        for code in ("general", "selective"):
+            act = QAction(mode_menu, checkable=True)
+            act.triggered.connect(lambda _c=False, code=code: self._request_mode(code))
+            mode_group.addAction(act)
+            mode_menu.addAction(act)
+            self.mode_actions[code] = act
+        self.mode_btn.setMenu(mode_menu)
+        self.lang_btn = QToolButton(objectName="pill")
         self.lang_btn.setPopupMode(QToolButton.InstantPopup)
         lang_menu = QMenu(self.lang_btn)
         group = QActionGroup(lang_menu)
@@ -89,6 +115,7 @@ class MainWindow(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self.loc_toggle)
         row.addStretch(1)
+        row.addWidget(self.mode_btn)
         row.addWidget(self.lang_btn)
         root.addLayout(row)
 
@@ -98,7 +125,14 @@ class MainWindow(QWidget):
         lb.setSpacing(6)
         self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
-        lb.addWidget(self.search)
+        self.refresh_btn = QToolButton(objectName="iconbtn", text="↻")
+        self.refresh_btn.clicked.connect(self.ctrl.load_locations)
+        srow = QHBoxLayout()
+        srow.setContentsMargins(0, 0, 0, 0)
+        srow.setSpacing(6)
+        srow.addWidget(self.search, 1)
+        srow.addWidget(self.refresh_btn)
+        lb.addLayout(srow)
         self.model = QStandardItemModel(self)
         self.proxy = QSortFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
@@ -121,6 +155,39 @@ class MainWindow(QWidget):
         self.loc_box.hide()
         root.addWidget(self.loc_box, 1)
 
+        # --- whitelist section (selective mode) ---
+        self.wl_toggle = QToolButton(checkable=True)
+        self.wl_toggle.toggled.connect(self._toggle_whitelist)
+        root.addWidget(self.wl_toggle)
+        self.wl_box = QWidget()
+        wb = QVBoxLayout(self.wl_box)
+        wb.setContentsMargins(0, 0, 0, 0)
+        wb.setSpacing(6)
+        self.wl_edit = QPlainTextEdit(objectName="log")
+        self.wl_edit.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.wl_edit.setMinimumHeight(260)
+        self.wl_edit.modificationChanged.connect(self._on_wl_modified)
+        wb.addWidget(self.wl_edit)
+        brow = QHBoxLayout()
+        brow.setSpacing(8)
+        self.wl_status = QLabel(wordWrap=True)
+        brow.addWidget(self.wl_status, 1)
+        self.wl_revert_btn = QPushButton()
+        self.wl_revert_btn.clicked.connect(self._wl_reload)
+        brow.addWidget(self.wl_revert_btn)
+        self.wl_save_btn = QPushButton(objectName="primary")
+        self.wl_save_btn.clicked.connect(self._wl_save)
+        brow.addWidget(self.wl_save_btn)
+        wb.addLayout(brow)
+        self.wl_box.hide()
+        root.addWidget(self.wl_box, 2)
+        self._wl_loaded = False
+        self._wl_msg = ("", "muted")
+        try:
+            self._wl_count = whitelist.count_records(whitelist.WHITELIST_PATH.read_text())
+        except OSError:
+            self._wl_count = 0
+
         # --- logs section ---
         self.log_toggle = QToolButton(checkable=True)
         self.log_toggle.toggled.connect(self._toggle_logs)
@@ -136,7 +203,11 @@ class MainWindow(QWidget):
         # signals
         ctrl.status_changed.connect(self._render_status)
         ctrl.busy_changed.connect(lambda _b: self._render_status(ctrl.status))
+        ctrl.busy_changed.connect(lambda _b: self._render_mode())
+        ctrl.mode_changed.connect(lambda _m: self._render_mode())
+        ctrl.pending_apply_changed.connect(lambda _p: self._render_notice())
         ctrl.locations_loaded.connect(self._fill_locations)
+        ctrl.locations_loading.connect(lambda busy: self.refresh_btn.setEnabled(not busy))
         ctrl.log_line.connect(self._append_log)
         ctrl.log_cleared.connect(self.log_view.clear)
         ctrl.login_url.connect(self._open_login_url)
@@ -149,10 +220,122 @@ class MainWindow(QWidget):
     def retranslate(self) -> None:
         self.search.setPlaceholderText(tr("search.placeholder"))
         self.hint.setText(tr("list.hint"))
+        self.refresh_btn.setToolTip(tr("loc.refresh"))
         self.lang_btn.setText(f"{i18n.LANGS[i18n.get_lang()]} ▾")
         self.lang_btn.setToolTip(tr("lang.tooltip"))
+        self.wl_revert_btn.setText(tr("wl.revert"))
+        self.wl_save_btn.setText(tr("wl.save"))
         self._update_toggle_texts()
         self._render_status(self.ctrl.status)
+        self._render_mode()
+        self._render_notice()
+        self._update_wl_status()
+
+    # ---------- exclusion mode ----------
+    def _render_mode(self) -> None:
+        mode = self.ctrl.mode
+        self.mode_btn.setText(f"{tr(f'mode.{mode}')} ▾")
+        self.mode_btn.setToolTip(tr("mode.tooltip"))
+        for code, act in self.mode_actions.items():
+            act.setText(tr(f"mode.menu.{code}"))
+            act.setChecked(code == mode)
+        self.mode_btn.setEnabled(not self.ctrl.busy)
+        self.wl_toggle.setVisible(mode == "selective" or self.wl_toggle.isChecked())
+
+    def _request_mode(self, mode: str) -> None:
+        if mode == self.ctrl.mode:
+            self._render_mode()
+            return
+        entries = None
+        if mode == "selective":
+            # the saved file is what gets applied; unsaved edits stay in the editor
+            entries = self._parse_wl(whitelist.load_text(i18n.get_lang()))
+            if entries is None:
+                self._render_mode()
+                return
+            if not entries:
+                answer = QMessageBox.question(self, tr("wl.empty_title"), tr("wl.empty_text"))
+                if answer != QMessageBox.Yes:
+                    self._render_mode()
+                    return
+        if not self.ctrl.set_mode(mode, entries):
+            self._render_mode()
+
+    def _render_notice(self) -> None:
+        self.notice_lbl.setText(tr("notice.reconnect"))
+        self.reconnect_btn.setText(tr("btn.reconnect"))
+        self.reconnect_btn.setEnabled(not self.ctrl.busy)
+        if self.notice.isVisible() != self.ctrl.pending_apply:
+            self.notice.setVisible(self.ctrl.pending_apply)
+            self._relayout()
+
+    # ---------- whitelist ----------
+    def _toggle_whitelist(self, on: bool) -> None:
+        if on and not self._wl_loaded:
+            self._wl_reload()
+        self.wl_box.setVisible(on)
+        if not on:
+            self._render_mode()
+        self._update_toggle_texts()
+        self._relayout()
+
+    def _show_whitelist(self) -> None:
+        self.wl_toggle.setVisible(True)
+        self.wl_toggle.setChecked(True)
+
+    def _wl_reload(self) -> None:
+        text = whitelist.load_text(i18n.get_lang())
+        self.wl_edit.setPlainText(text)
+        self.wl_edit.document().setModified(False)
+        self._wl_loaded = True
+        self._wl_count = whitelist.count_records(text)
+        self._set_wl_msg("")
+        self._update_toggle_texts()
+
+    def _parse_wl(self, text: str) -> list[str] | None:
+        entries, errors = whitelist.parse(text)
+        if errors:
+            lines = ", ".join(str(e.line_no) for e in errors[:8]) + ("…" if len(errors) > 8 else "")
+            self._show_whitelist()
+            self._set_wl_msg(tr("wl.errors", lines=lines), "error")
+            return None
+        return entries
+
+    def _wl_save(self) -> None:
+        text = self.wl_edit.toPlainText()
+        entries = self._parse_wl(text)
+        if entries is None:
+            return
+        whitelist.save_text(text)
+        self.wl_edit.document().setModified(False)
+        self._wl_count = whitelist.count_records(text)
+        self._update_toggle_texts()
+
+        def done(ok: bool) -> None:
+            if ok:
+                self._set_wl_msg(tr("wl.saved", n=len(entries)), "ok")
+            else:
+                self._set_wl_msg(tr("wl.save_failed"), "error")
+
+        if not self.ctrl.apply_whitelist(entries, done):
+            self._set_wl_msg(tr("wl.busy"), "error")
+
+    def _on_wl_modified(self, modified: bool) -> None:
+        if modified:
+            self._wl_msg = ("", "muted")
+        self._update_wl_status()
+
+    def _set_wl_msg(self, text: str, kind: str = "muted") -> None:
+        self._wl_msg = (text, kind)
+        self._update_wl_status()
+
+    def _update_wl_status(self) -> None:
+        text, kind = self._wl_msg
+        if not text and self.wl_edit.document().isModified():
+            text, kind = tr("wl.modified"), "warn"
+        color = {"ok": theme.ACCENT, "error": theme.DANGER, "warn": theme.WARN}.get(kind, theme.MUTED)
+        self.wl_status.setStyleSheet(f"font-size: 8.5pt; color: {color};")
+        self.wl_status.setText(text)
 
     def _set_lang(self, code: str) -> None:
         if code == i18n.get_lang():
@@ -221,6 +404,8 @@ class MainWindow(QWidget):
         arrow = "▾" if self.loc_toggle.isChecked() else "▸"
         title = tr("toggle.locations")
         self.loc_toggle.setText(f"{arrow}  {title} ({n})" if n else f"{arrow}  {title}")
+        wl_arrow = "▾" if self.wl_toggle.isChecked() else "▸"
+        self.wl_toggle.setText(f"{wl_arrow}  {tr('wl.toggle')} ({self._wl_count})")
         on = self.log_toggle.isChecked()
         self.log_toggle.setText(f"▾  {tr('logs.hide')}" if on else f"▸  {tr('logs.show')}")
 
@@ -280,7 +465,8 @@ class MainWindow(QWidget):
 
     def _relayout(self) -> None:
         def apply() -> None:
-            width = LOG_WIDTH if self.log_view.isVisible() else BASE_WIDTH
+            wide = self.log_view.isVisible() or self.wl_box.isVisible()
+            width = LOG_WIDTH if wide else BASE_WIDTH
             self.setMinimumSize(0, 0)
             self.layout().activate()
             self.resize(width, self.sizeHint().height())

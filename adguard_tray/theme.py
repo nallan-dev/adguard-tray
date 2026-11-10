@@ -68,8 +68,16 @@ def apply_dark(app: QApplication) -> None:
         QPushButton#danger:hover {{ background: #6b3230; }}
         QToolButton {{ border: none; color: {MUTED}; padding: 4px 0; font-weight: 600; }}
         QToolButton:hover {{ color: {TEXT}; }}
-        QToolButton#lang {{ font-size: 8.5pt; padding: 2px 4px; }}
-        QToolButton#lang::menu-indicator {{ image: none; width: 0; }}
+        QToolButton#iconbtn {{
+            background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 6px;
+            color: {MUTED}; font-size: 12pt; font-weight: 400; padding: 0; min-width: 30px; min-height: 28px;
+        }}
+        QToolButton#iconbtn:hover {{ color: {TEXT}; border-color: #55575c; }}
+        QToolButton#iconbtn:disabled {{ color: #4f5155; }}
+        QToolButton#pill {{ font-size: 8.5pt; padding: 2px 4px; }}
+        QToolButton#pill::menu-indicator {{ image: none; width: 0; }}
+        QFrame#notice {{ background: #3a3221; border: 1px solid #6b5a2a; border-radius: 8px; }}
+        QFrame#notice QLabel {{ color: {TEXT}; }}
         QFrame#card {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 10px; }}
         QLabel#muted {{ color: {MUTED}; }}
         QPlainTextEdit#log {{ font-family: monospace; font-size: 9pt; }}

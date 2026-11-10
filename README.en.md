@@ -17,6 +17,7 @@ A single binary with a dark theme, built on top of the stock `adguardvpn-cli` ut
 - Account login via the browser (`adguardvpn-cli login`).
 - Closing the window hides the app to the tray. To quit, right-click the icon → Quit.
 - Single instance: launching it again brings up the existing window.
+- VPN mode: **general** (all traffic through the VPN) or **selective** (only the whitelist through the VPN). The whitelist is edited right in the window.
 - English and Russian UI: RU / EN switch in the window. On first launch the language follows the system locale.
 
 ## Requirements
@@ -87,6 +88,26 @@ The app detects that passwordless sudo is available and uses it.
 
 > ⚠️ This trades security for convenience: `NOPASSWD` on `kill` lets your user terminate any root process without a password. That is usually fine on a personal desktop. If it is not fine for you, stay with option 1.
 
+## General and selective mode
+
+The mode switch sits next to the language switch:
+
+- **General**: all traffic goes through the VPN, except AdGuard's exclusions.
+- **Selective**: **only** the addresses from the whitelist go through the VPN, everything else goes directly.
+
+In selective mode a "Whitelist" section appears. After installation the list is empty; the top of the file has a short guide with examples:
+
+```text
+example.com          # the domain and all its subdomains (www., api., cdn., …)
+=api.example.com     # only this host, no subdomains
+203.0.113.10         # an IP address
+203.0.113.0/24       # a subnet
+```
+
+"Save" writes the file and loads the list into AdGuard. Invalid lines are reported by number, and then nothing is saved. If the VPN is connected, AdGuard applies a new mode or list only after a reconnect, so the window shows a notice with a "Reconnect" button.
+
+The mode and the list live in `adguardvpn-cli`'s own settings, so they are shared between the GUI and the terminal. Changes made with `adguardvpn-cli site-exclusions` show up in the GUI, and "Save" in the GUI overwrites AdGuard's selective list with the file contents.
+
 ## How it works
 
 The app knows nothing about the AdGuard protocol. It just calls `adguardvpn-cli`:
@@ -98,12 +119,15 @@ The app knows nothing about the AdGuard protocol. It just calls `adguardvpn-cli`
 | Status | look for an `adguardvpn-cli connect` process in `/proc`, plus a `tun*` interface |
 | Locations | `adguardvpn-cli list-locations` |
 | Login | `adguardvpn-cli login` (the link opens in the browser) |
+| Mode | `adguardvpn-cli site-exclusions mode` (read), `sudo … site-exclusions mode general\|selective` |
+| Whitelist | `sudo … site-exclusions clear --for-mode selective` + `… add --for-mode selective <entries>` |
 
 Why not `status` and `disconnect`? In `--no-fork` mode the CLI writes no pid file, so `status` always reports "disconnected" and `disconnect` fails with "Process is not running". The app calls `status` every 30 seconds only to check whether you are logged in.
 
 Files:
 
 - `~/.config/adguard-tray/config.json`: last location, UI language, whether logs are shown.
+- `~/.config/adguard-tray/whitelist.txt`: the selective-mode whitelist.
 - `~/.local/bin/adguard-tray`: the binary.
 - `~/.local/share/applications/adguard-tray.desktop`: menu entry.
 - `~/.config/autostart/adguard-tray.desktop`: autostart.
@@ -131,6 +155,7 @@ adguard_tray/
   main.py        # tray, menu, single instance
   theme.py       # dark theme and icon (drawn in code)
   i18n.py        # UI strings, ru / en
+  whitelist.py   # whitelist format and parsing
   config.py      # ~/.config/adguard-tray/config.json
 ```
 

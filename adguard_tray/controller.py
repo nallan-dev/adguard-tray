@@ -23,6 +23,9 @@ class VpnController(QObject):
     log_cleared = Signal()
     busy_changed = Signal(bool)
     login_url = Signal(str)
+    locations_loading = Signal(bool)
+    mode_changed = Signal(str)  # general | selective | unknown
+    pending_apply_changed = Signal(bool)  # settings changed, reconnect needed
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -40,13 +43,17 @@ class VpnController(QObject):
         self._partial = ""
         self._login_buf = ""
         self._external_pid: int | None = None
+        self.mode = "unknown"  # AdGuard exclusion mode: general | selective
+        self.pending_apply = False
+        self._mode_proc: QProcess | None = None
+        self._loc_proc: QProcess | None = None
 
         self._timer = QTimer(self, interval=POLL_MS, timeout=self.refresh_status)
-        self._cli_timer = QTimer(self, interval=CLI_STATUS_MS, timeout=self._query_cli_status)
+        self._cli_timer = QTimer(self, interval=CLI_STATUS_MS, timeout=self._query_cli)
 
     # ---------- public API ----------
     def start(self) -> None:
-        self._query_cli_status()
+        self._query_cli()
         self.refresh_status()
         self.load_locations()
         self._timer.start()
@@ -66,6 +73,7 @@ class VpnController(QObject):
             self.disconnect()
             return
         self._external_pid = None
+        self._set_pending(False)  # a fresh connection picks up current settings
         self.logs.clear()
         self.log_cleared.emit()
         self._log(f"--- connect {location or '(last used)'} ---")
@@ -106,20 +114,124 @@ class VpnController(QObject):
         self._login_buf = ""
         self._run_aux(cli.user_cmd("login"), lambda _c: self._query_cli_status(), login=True)
 
-    def load_locations(self) -> None:
+    # ---------- exclusion mode / whitelist ----------
+    @property
+    def vpn_active(self) -> bool:
+        return self.status.connected or self.status.state == "starting" or self.own_process
+
+    def set_mode(self, mode: str, entries: list[str] | None = None) -> bool:
+        """Switch general/selective. For selective, `entries` are loaded first."""
+        if self.busy:
+            return False
+        cmds = self._whitelist_cmds(entries) if entries is not None else []
+        cmds.append(["site-exclusions", "mode", mode])
+        self._log(f"--- site-exclusions mode {mode} ---")
+        self._run_batch(cli.root_batch(cmds), lambda ok: self._after_settings(ok, mode))
+        return True
+
+    def apply_whitelist(self, entries: list[str], on_done=None) -> bool:
+        """Replace AdGuard's selective list with `entries`."""
+        if self.busy:
+            return False
+        self._log(f"--- whitelist: {len(entries)} entries ---")
+
+        def done(ok: bool) -> None:
+            self._after_settings(ok, None)
+            if on_done:
+                on_done(ok)
+
+        self._run_batch(cli.root_batch(self._whitelist_cmds(entries)), done)
+        return True
+
+    def reconnect(self) -> None:
+        """Reconnect to the current location so AdGuard applies new settings."""
+        proc = cli.find_vpn_process()
+        if self.own_process:
+            loc = self._conn_location
+        elif proc is not None:
+            loc = proc.location_arg
+        else:
+            loc = self._cli_status.location
+        self.connect_to(loc)
+
+    @staticmethod
+    def _whitelist_cmds(entries: list[str]) -> list[list[str]]:
+        cmds = [["site-exclusions", "clear", "--for-mode", "selective"]]
+        if entries:
+            cmds.append(["site-exclusions", "add", "--for-mode", "selective", *entries])
+        return cmds
+
+    def _after_settings(self, ok: bool, mode: str | None) -> None:
+        if ok:
+            if mode is not None and mode != self.mode:
+                self.mode = mode
+                self.mode_changed.emit(mode)
+            # a mode switch always matters; a list change only matters in selective mode
+            if self.vpn_active and (mode is not None or self.mode == "selective"):
+                self._set_pending(True)
+        self._query_mode()
+
+    def _set_pending(self, value: bool) -> None:
+        if value != self.pending_apply:
+            self.pending_apply = value
+            self.pending_apply_changed.emit(value)
+
+    def _query_mode(self) -> None:
+        if self._mode_proc is not None:
+            return
         p = QProcess(self)
         p.setProcessChannelMode(QProcess.MergedChannels)
+        self._mode_proc = p
+
+        def done(_code: int, _st: object) -> None:
+            mode = cli.parse_mode(bytes(p.readAll()).decode(errors="replace"))
+            self._mode_proc = None
+            p.deleteLater()
+            if mode != self.mode:
+                self.mode = mode
+                self.mode_changed.emit(mode)
+
+        p.finished.connect(done)
+        p.errorOccurred.connect(lambda _e: setattr(self, "_mode_proc", None))
+        p.start(*cli.user_cmd("site-exclusions", "mode"))
+
+    def _run_batch(self, cmds: list[tuple[str, list[str]]], done) -> None:
+        def step(i: int) -> None:
+            if i == len(cmds):
+                done(True)
+                return
+            self._run_aux(cmds[i], lambda code: step(i + 1) if code == 0 else done(False))
+
+        step(0)
+
+    @property
+    def loading_locations(self) -> bool:
+        return self._loc_proc is not None
+
+    def load_locations(self) -> None:
+        if self._loc_proc is not None:
+            return
+        p = QProcess(self)
+        p.setProcessChannelMode(QProcess.MergedChannels)
+        self._loc_proc = p
+
+        def finish() -> None:
+            self._loc_proc = None
+            p.deleteLater()
+            self.locations_loading.emit(False)
 
         def done(_code: int, _st: object) -> None:
             text = bytes(p.readAll()).decode(errors="replace")
             locs = cli.parse_locations(text)
+            finish()
             if locs:
                 self.locations = locs
                 self.locations_loaded.emit(locs)
                 self.refresh_status(force_emit=True)
-            p.deleteLater()
 
         p.finished.connect(done)
+        p.errorOccurred.connect(lambda _e: finish() if p.state() == QProcess.NotRunning else None)
+        self.locations_loading.emit(True)
         p.start(*cli.user_cmd("list-locations"))
 
     def refresh_status(self, force_emit: bool = False) -> None:
@@ -155,6 +267,13 @@ class VpnController(QObject):
         """Stop the VPN only if this GUI started it."""
         self._timer.stop()
         self._cli_timer.stop()
+        # background read-only queries: drop them so their callbacks never run on teardown
+        for q in (self._cli_status_proc, self._mode_proc, self._loc_proc):
+            if q is not None:
+                q.blockSignals(True)
+                q.kill()
+                q.waitForFinished(500)
+        self._cli_status_proc = self._mode_proc = self._loc_proc = None
         if not self.own_process:
             return
         proc = cli.find_vpn_process()
@@ -166,6 +285,10 @@ class VpnController(QObject):
             self._conn.kill()
 
     # ---------- internals ----------
+    def _query_cli(self) -> None:
+        self._query_cli_status()
+        self._query_mode()
+
     def _query_cli_status(self) -> None:
         if self._cli_status_proc is not None:
             return
@@ -268,5 +391,7 @@ class VpnController(QObject):
     def _set_status(self, st: Status, force_emit: bool = False) -> None:
         changed = (st.state, st.location) != (self.status.state, self.status.location)
         self.status = st
+        if not self.vpn_active:
+            self._set_pending(False)
         if changed or force_emit:
             self.status_changed.emit(st)
