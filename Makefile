@@ -13,7 +13,7 @@ TARGET       := $(PREFIX)/bin/$(APP)
 DESKTOP_APP  := $(HOME)/.local/share/applications/$(APP).desktop
 DESKTOP_AUTO := $(HOME)/.config/autostart/$(APP).desktop
 ARCHIVE      := $(APP)-$(VERSION)-linux-x86_64.tar.gz
-SOURCES      := $(shell find adguard_tray -name '*.py') run.py pyproject.toml
+SOURCES      := $(shell find adguard_tray -name '*.py') run.py pyproject.toml $(APP).spec
 
 # --- colours (disabled when NO_COLOR is set or output is not a terminal) -----
 ifeq ($(NO_COLOR)$(shell [ -t 1 ] && echo tty),tty)
@@ -81,8 +81,7 @@ build: $(BIN) ## Собрать один бинарник dist/adguard-tray
 $(BIN): $(SOURCES) uv.lock
 	@$(MAKE) --no-print-directory test
 	$(call info,сборка бинарника PyInstaller…)
-	@uv run pyinstaller --noconfirm --clean --onefile --windowed --log-level WARN \
-		--name $(APP) --exclude-module tkinter run.py
+	@uv run pyinstaller --noconfirm --clean --log-level WARN $(APP).spec
 	@printf "$(G)✔$(N) готово: $(BIN) (%s)\n" "$$(du -h $(BIN) | cut -f1)"
 
 .PHONY: install
@@ -131,7 +130,7 @@ release: ## Поставить тег v<версия> и запустить сб
 
 .PHONY: clean
 clean: ## Удалить артефакты сборки
-	@rm -rf build dist *.spec .pytest_cache $(APP)-*.tar.gz*
+	@rm -rf build dist .pytest_cache $(APP)-*.tar.gz*
 	@find . -name __pycache__ -not -path './.venv/*' -exec rm -rf {} +
 	$(call ok,чисто)
 
